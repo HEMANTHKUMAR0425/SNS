@@ -1,58 +1,64 @@
-import random
-import time
+from flask import Flask, render_template, request, redirect, session, flash
+from flask_session import Session
+import sqlite3
+from bcrypt import hashpw, checkpw, gensalt
 
-# Simulated Devices in the network with MAC addresses
-devices = {
-    "Device1": "00:0a:95:9d:68:16",
-    "Device2": "00:0a:95:9d:68:17",
-    "Device3": "00:0a:95:9d:68:18",
-}
+app = Flask(__name__)
+app.secret_key = 'supersecretkey'  # Change this for production!
+app.config['SESSION_TYPE'] = 'filesystem'
+Session(app)
 
-# Network Access Control List (ACL)
-authorized_devices = {
-    "00:0a:95:9d:68:16",  # Device1
-    "00:0a:95:9d:68:17",  # Device2
-}
+# --- Database Setup ---
+def init_db():
+    conn = sqlite3.connect('database.db')
+    cursor = conn.cursor()
+    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        email TEXT NOT NULL UNIQUE,
+        password TEXT NOT NULL
+    )''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS posts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+    )''')
+    conn.commit()
+    conn.close()
 
-# Simulated malware MAC address trying to access the network
-malware_device = "00:0a:95:9d:68:99"  # Spoofed MAC address
+# Initialize DB before first request
+@app.before_first_request
+def setup():
+    init_db()
 
-def access_network(device_mac):
-    """Simulates a device trying to access the network."""
-    if device_mac in authorized_devices:
-        print(f"Access granted to device with MAC: {device_mac}")
-        return True
-    else:
-        print(f"Access denied for MAC: {device_mac}. Unauthorized access attempt detected!")
-        return False
+# --- User Registration ---
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == 'POST':
+        username = request.form['username'].strip()
+        email = request.form['email'].strip()
+        password = request.form['password']
 
-def simulate_normal_device_access():
-    """Simulates legitimate devices accessing the network."""
-    print("\n--- Normal Device Access Simulation Started ---")
-    for _ in range(5):  # Limit number of access attempts for demonstration
-        device = random.choice(list(devices.values()))
-        access_network(device)
-        time.sleep(random.randint(1, 3))  # Delay between accesses
+        # Input validation
+        if not username or not email or not password:
+            flash('All fields are required.')
+            return redirect('/register')
 
-def simulate_malware_attack():
-    """Simulates malware trying to bypass NAC."""
-    print("\n--- Malware Attack Simulation Started ---")
-    for _ in range(5):  # Malware tries multiple times
-        access_granted = access_network(malware_device)
-        if not access_granted:
-            print("Malware trying again...")
-        time.sleep(1)
+        hashed_password = hashpw(password.encode('utf-8'), gensalt())
 
-def simulate_dos_attack():
-    """Simulates a Denial of Service attack."""
-    print("\n--- DoS Attack Simulation Started ---")
-    for _ in range(10):  # Rapid access attempts
-        access_network(malware_device)
-        time.sleep(0.5)
+        try:
+            conn = sqlite3.connect('database.db')
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
+                           (username, email, hashed_password))
+            conn.commit()
+            flash('Registration successful. Please log in.')
+            return redirect('/login')
+        except sqlite3.IntegrityError:
+            flash('Username or email already exists.')
+            return redirect('/register')
+        finally:
+            conn.close()
 
-if __name__ == "__main__":
-    simulate_normal_device_access()
-    time.sleep(2)
-    simulate_malware_attack()
-    time.sleep(2)
-    simulate_dos_attack()
+    return render_template('register.html')
